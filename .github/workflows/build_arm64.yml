@@ -5,7 +5,6 @@ on:
 
 jobs:
   build-arm64:
-    # GitHub'un ücretsiz ARM64 Linux runner'ı
     runs-on: ubuntu-24.04-arm
 
     steps:
@@ -35,17 +34,36 @@ jobs:
           chmod +x gradlew
           ./gradlew imgui-binding:generateLibs -Denvs=linux64 -Dlocal
 
-      - name: Find and collect .so
+      - name: Debug - tum dosyalari listele
         run: |
-          echo "=== Bulunan dosyalar ==="
-          find imgui-java/imgui-binding/build -name "*.so" 2>/dev/null
+          echo "=== imgui-java dizin yapisi ==="
+          find imgui-java -name "*.so" 2>/dev/null
+          echo "=== build dizini ==="
+          find imgui-java/imgui-binding -type f 2>/dev/null | head -50
+          echo "=== tum so dosyalari ==="
+          find . -name "*.so" 2>/dev/null
+
+      - name: Collect so files
+        run: |
           mkdir -p output
-          find imgui-java/imgui-binding/build -name "*.so" -exec cp {} output/ \;
-          ls -la output/
+          # Tum .so dosyalarini kopyala
+          find imgui-java -name "*.so" -exec cp {} output/ \; 2>/dev/null || true
+          find imgui-java -name "libimgui*" -exec cp {} output/ \; 2>/dev/null || true
+          echo "=== output klasoru ==="
+          ls -la output/ || echo "output bos"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: imgui-java-arm64-1.86.11
           path: output/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload entire build dir as fallback
+        uses: actions/upload-artifact@v4
+        with:
+          name: imgui-java-full-build
+          path: imgui-java/imgui-binding/
+          if-no-files-found: warn
           retention-days: 30
