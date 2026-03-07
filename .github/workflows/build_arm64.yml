@@ -1,97 +1,51 @@
 name: Build imgui-java ARM64
 
 on:
-  workflow_dispatch:  # Elle tetikle (Actions sekmesinden)
-  push:
-    paths:
-      - '.github/workflows/build_arm64.yml'  # Sadece bu dosya değişince çalış
+  workflow_dispatch:
 
 jobs:
   build-arm64:
-    runs-on: ubuntu-latest  # Ücretsiz x86_64 runner
+    # GitHub'un ücretsiz ARM64 Linux runner'ı
+    runs-on: ubuntu-24.04-arm
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install cross-compile tools
+      - name: Install dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
-            cmake ninja-build \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu \
-            curl unzip
+            git cmake ninja-build \
+            gcc g++ \
+            libfreetype-dev \
+            ant openjdk-17-jdk
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
+      - name: Set JAVA_HOME
+        run: |
+          echo "JAVA_HOME=$(dirname $(dirname $(readlink -f $(which javac))))" >> $GITHUB_ENV
 
       - name: Clone imgui-java 1.86.11
         run: |
-          git clone https://github.com/SpaiR/imgui-java.git
+          git clone --recurse-submodules https://github.com/SpaiR/imgui-java.git
           cd imgui-java
           git checkout v1.86.11
           git submodule update --init --recursive
 
-      - name: Build FreeType ARM64 (static)
+      - name: Build with Gradle (native ARM64)
         run: |
-          FREETYPE_VERSION="2.13.2"
-          curl -L "https://download.savannah.gnu.org/releases/freetype/freetype-${FREETYPE_VERSION}.tar.gz" | tar xz
-          cd "freetype-${FREETYPE_VERSION}"
-          mkdir build-arm64 && cd build-arm64
-          cmake .. \
-            -DCMAKE_SYSTEM_NAME=Linux \
-            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DFT_DISABLE_ZLIB=ON \
-            -DFT_DISABLE_BZIP2=ON \
-            -DFT_DISABLE_PNG=ON \
-            -DFT_DISABLE_HARFBUZZ=ON \
-            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/freetype-arm64"
-          cmake --build . --parallel $(nproc)
-          cmake --install .
+          cd imgui-java
+          chmod +x gradlew
+          ./gradlew imgui-binding:generateLibs -Denvs=linux64 -Dlocal
 
-      - name: Build imgui-java ARM64
+      - name: Find and collect .so
         run: |
-          cd imgui-java/imgui-binding/src/main/native
-          cmake -B build-arm64 -G Ninja \
-            -DCMAKE_SYSTEM_NAME=Linux \
-            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
-            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
-            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
-            -DFREETYPE_INCLUDE_DIRS="${GITHUB_WORKSPACE}/freetype-arm64/include/freetype2" \
-            -DFREETYPE_LIBRARIES="${GITHUB_WORKSPACE}/freetype-arm64/lib/libfreetype.a" \
-            -DJAVA_HOME="${JAVA_HOME}" \
-            -DIMGUI_FREETYPE=ON
-          cmake --build build-arm64 --parallel $(nproc)
-
-      - name: Collect .so
-        run: |
-          SO=$(find imgui-java -name "libimgui-java64.so" 2>/dev/null | head -1)
-          if [ -z "$SO" ]; then
-            echo "HATA: .so bulunamadı!"
-            find imgui-java/imgui-binding/src/main/native/build-arm64 -type f
-            exit 1
-          fi
-          echo "Bulunan: $SO"
+          echo "=== Bulunan dosyalar ==="
+          find imgui-java/imgui-binding/build -name "*.so" 2>/dev/null
           mkdir -p output
-          cp "$SO" output/libimgui-java64.so
-          echo "SHA256: $(sha256sum output/libimgui-java64.so)"
+          find imgui-java/imgui-binding/build -name "*.so" -exec cp {} output/ \;
+          ls -la output/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: imgui-java-arm64-1.86.11
-          path: output/libimgui-java64.so
+          path: output/
           retention-days: 30
