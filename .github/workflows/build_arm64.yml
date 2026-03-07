@@ -8,6 +8,12 @@ jobs:
     runs-on: ubuntu-24.04-arm
 
     steps:
+      - name: Verify ARM64
+        run: |
+          uname -m
+          gcc --version
+          java -version || true
+
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
@@ -19,7 +25,10 @@ jobs:
 
       - name: Set JAVA_HOME
         run: |
-          echo "JAVA_HOME=$(dirname $(dirname $(readlink -f $(which javac))))" >> $GITHUB_ENV
+          JAVA_PATH=$(dirname $(dirname $(readlink -f $(which javac))))
+          echo "JAVA_HOME=$JAVA_PATH" >> $GITHUB_ENV
+          echo "Java home: $JAVA_PATH"
+          ls "$JAVA_PATH/include/" || true
 
       - name: Clone imgui-java 1.86.11
         run: |
@@ -28,42 +37,32 @@ jobs:
           git checkout v1.86.11
           git submodule update --init --recursive
 
-      - name: Build with Gradle (native ARM64)
+      - name: Build with Gradle
         run: |
           cd imgui-java
           chmod +x gradlew
-          ./gradlew imgui-binding:generateLibs -Denvs=linux64 -Dlocal
+          # linux64 = Linux x86_64, linuxArm64 dene
+          ./gradlew imgui-binding:generateLibs -Denvs=linux64 -Dlocal 2>&1
 
-      - name: Debug - tum dosyalari listele
+      - name: Debug output
         run: |
-          echo "=== imgui-java dizin yapisi ==="
-          find imgui-java -name "*.so" 2>/dev/null
-          echo "=== build dizini ==="
-          find imgui-java/imgui-binding -type f 2>/dev/null | head -50
-          echo "=== tum so dosyalari ==="
-          find . -name "*.so" 2>/dev/null
+          echo "=== Mimari ==="
+          uname -m
+          echo "=== .so dosyaları ==="
+          find imgui-java -name "*.so" 2>/dev/null -exec sh -c 'echo "$1:"; file "$1"' _ {} \;
+          echo "=== Build dizini ==="
+          find imgui-java/imgui-binding -type f -name "*.so" 2>/dev/null
 
-      - name: Collect so files
+      - name: Collect
         run: |
           mkdir -p output
-          # Tum .so dosyalarini kopyala
-          find imgui-java -name "*.so" -exec cp {} output/ \; 2>/dev/null || true
-          find imgui-java -name "libimgui*" -exec cp {} output/ \; 2>/dev/null || true
-          echo "=== output klasoru ==="
-          ls -la output/ || echo "output bos"
+          find imgui-java -name "*.so" -exec cp {} output/ \;
+          find imgui-java -name "*.dylib" -exec cp {} output/ \;
+          ls -lh output/
 
-      - name: Upload artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: imgui-java-arm64-1.86.11
           path: output/
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Upload entire build dir as fallback
-        uses: actions/upload-artifact@v4
-        with:
-          name: imgui-java-full-build
-          path: imgui-java/imgui-binding/
-          if-no-files-found: warn
           retention-days: 30
