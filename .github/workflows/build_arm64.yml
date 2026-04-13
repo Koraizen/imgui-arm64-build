@@ -16,14 +16,12 @@ jobs:
             git cmake ninja-build \
             gcc g++ \
             libfreetype-dev \
-            openjdk-17-jdk
+            ant openjdk-17-jdk
 
       - name: Set JAVA_HOME
         run: |
           JAVA_PATH=$(dirname $(dirname $(readlink -f $(which javac))))
           echo "JAVA_HOME=$JAVA_PATH" >> $GITHUB_ENV
-          echo "JAVA_HOME: $JAVA_PATH"
-          ls "$JAVA_PATH/include/"
 
       - name: Clone imgui-java 1.86.11
         run: |
@@ -32,60 +30,55 @@ jobs:
           git checkout v1.86.11
           git submodule update --init --recursive
 
-      - name: Show CMakeLists location
-        run: |
-          find imgui-java -name "CMakeLists.txt" | head -10
-          echo "=== imgui-binding/src/main/native ==="
-          ls imgui-java/imgui-binding/src/main/native/ 2>/dev/null || echo "yok"
-          echo "=== buildSrc scripts ==="
-          find imgui-java/buildSrc -type f | sort
-
-      - name: Build native .so with CMake directly
-        run: |
-          JAVA_HOME_VAL=$JAVA_HOME
-          
-          # imgui-java'nın CMakeLists.txt'ini bul
-          CMAKE_DIR=$(find imgui-java -name "CMakeLists.txt" | grep -v "/include/" | head -1 | xargs dirname)
-          echo "CMake dizini: $CMAKE_DIR"
-          
-          mkdir -p native-build
-          cd native-build
-          
-          cmake "$OLDPWD/$CMAKE_DIR" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DJAVA_HOME="$JAVA_HOME_VAL" \
-            -DJAVA_INCLUDE_PATH="$JAVA_HOME_VAL/include" \
-            -DJAVA_INCLUDE_PATH2="$JAVA_HOME_VAL/include/linux" \
-            -DIMGUI_FREETYPE=ON \
-            -G Ninja 2>&1
-          
-          ninja -v 2>&1
-          
-          echo "=== Üretilen dosyalar ==="
-          find . -name "*.so" | while read f; do echo "$f"; file "$f"; done
-
-      - name: Fallback - Gradle generateLibs with verbose
-        if: always()
+      - name: Build ARM64 native lib
         run: |
           cd imgui-java
           chmod +x gradlew
-          ./gradlew imgui-binding:generateLibs -Denvs=linuxArm64 -Dlocal --info 2>&1 | tail -100
-        continue-on-error: true
+          ./gradlew imgui-binding:generateLibs -Denvs=linuxArm64 -Dlocal 2>&1
 
-      - name: Collect all .so files
-        if: always()
+      - name: Show all .so files with architecture
+        run: |
+          find imgui-java/bin -name "*.so" 2>/dev/null | while read f; do
+            echo "--- $f ---"
+            file "$f"
+            readelf -h "$f" 2>/dev/null | grep Machine
+          done
+
+      - name: Collect output - freetype version only
         run: |
           mkdir -p output
-          find . -name "*.so" 2>/dev/null | while read f; do
-            echo "Kopyalanıyor: $f"
-            cp "$f" output/
-          done
+          # freetype klasöründeki ARM64 .so'yu al
+          FT_SO="imgui-java/bin/freetype/libimgui-java64.so"
+          PLAIN_SO="imgui-java/bin/libimgui-java64.so"
+
+          if [ -f "$FT_SO" ]; then
+            ARCH=$(readelf -h "$FT_SO" 2>/dev/null | grep Machine | grep -i "aarch\|arm" || true)
+            if [ -n "$ARCH" ]; then
+              echo "Freetype ARM64 .so bulundu: $FT_SO"
+              cp "$FT_SO" output/libimgui-java64.so
+            else
+              echo "UYARI: freetype .so ARM64 değil: $(file $FT_SO)"
+            fi
+          fi
+
+          if [ -f "$PLAIN_SO" ]; then
+            ARCH=$(readelf -h "$PLAIN_SO" 2>/dev/null | grep Machine | grep -i "aarch\|arm" || true)
+            if [ -n "$ARCH" ]; then
+              echo "Plain ARM64 .so bulundu: $PLAIN_SO"
+              cp "$PLAIN_SO" output/libimgui-java64-noft.so
+            else
+              echo "Plain .so ARM64 değil, atlanıyor: $(file $PLAIN_SO)"
+            fi
+          fi
+
           echo "=== output içeriği ==="
-          ls -lh output/ || echo "Hiç .so bulunamadı"
+          ls -lh output/
+          for f in output/*.so; do
+            echo "$f:"; file "$f"; readelf -h "$f" 2>/dev/null | grep Machine
+          done
 
       - name: Upload
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: imgui-java-arm64-1.86.11
           path: output/
