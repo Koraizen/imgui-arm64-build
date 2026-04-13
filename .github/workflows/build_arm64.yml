@@ -29,38 +29,83 @@ jobs:
           git checkout v1.86.11
           git submodule update --init --recursive
 
-      - name: Build ARM64 native lib
+      - name: Generate JNI files (Gradle step only)
         run: |
           cd imgui-java
           chmod +x gradlew
-          
-          # gradle.properties ile JVM argümanlarını geçir
-          # System.getProperty() Gradle daemon JVM'inden okur
           cat > gradle.properties << 'EOF'
           org.gradle.jvmargs=-Denvs=linux -Dlocal
           EOF
-          
-          ./gradlew imgui-binding:generateLibs --info 2>&1 | tail -150
+          # Sadece Java derleme + JNI üretimi, Ant compile'ı henüz yapma
+          # generateLibs Ant'i çalıştırır ve başarısız olur ama JNI dosyaları üretilir
+          ./gradlew imgui-binding:generateLibs || true
 
-      - name: Find all .so files and check architecture
+      - name: Patch Ant build XML for ARM64
         run: |
-          echo "=== Tüm .so dosyaları ==="
-          find imgui-java -name "*.so" 2>/dev/null | while read f; do
-            echo "--- $f ---"
-            file "$f"
-            readelf -h "$f" 2>/dev/null | grep Machine
+          BUILD_XML="imgui-java/imgui-binding/build/jni/build-linux64.xml"
+          
+          if [ ! -f "$BUILD_XML" ]; then
+            echo "HATA: $BUILD_XML bulunamadı!"
+            ls imgui-java/imgui-binding/build/jni/ 2>/dev/null || echo "jni klasörü yok"
+            exit 1
+          fi
+          
+          echo "=== Orijinal compiler flags ==="
+          grep -E "mfpmath|msse|m64|cppflags|FLAGS" "$BUILD_XML" | head -20
+          
+          # ARM64'te geçersiz olan x86 flag'leri kaldır
+          sed -i 's/-mfpmath=sse//g' "$BUILD_XML"
+          sed -i 's/-msse2\b//g' "$BUILD_XML"
+          sed -i 's/-msse\b//g' "$BUILD_XML"
+          sed -i 's/-m64\b//g' "$BUILD_XML"
+          
+          echo "=== Patch sonrası ==="
+          grep -E "mfpmath|msse|m64|FLAGS" "$BUILD_XML" | head -20
+
+      - name: Build with Ant directly (ARM64)
+        run: |
+          BUILD_XML="imgui-java/imgui-binding/build/jni/build-linux64.xml"
+          JNI_DIR="imgui-java/imgui-binding/build/jni"
+          
+          cd "$JNI_DIR"
+          ant -f build-linux64.xml -v -Dhas-compiler=true -Drelease=true clean postcompile
+          
+          echo "=== postcompile sonrası dosyalar ==="
+          find . -name "*.so" 2>/dev/null | while read f; do
+            echo "$f:"; file "$f"
+          done
+
+      - name: Pack natives
+        run: |
+          cd imgui-java/imgui-binding/build/jni
+          ant -f build.xml -v pack-natives || true
+          
+          echo "=== libsNative içeriği ==="
+          find ../../libsNative -name "*.so" 2>/dev/null | while read f; do
+            echo "$f:"; file "$f"
           done
 
       - name: Collect ARM64 output
         run: |
           mkdir -p output
-          find imgui-java -name "*.so" 2>/dev/null | while read f; do
+          find imgui-java -name "*.so" -newer imgui-java/gradlew 2>/dev/null | while read f; do
             ARCH=$(readelf -h "$f" 2>/dev/null | grep Machine | grep -i "aarch\|arm" || true)
             if [ -n "$ARCH" ]; then
               echo "ARM64 bulundu: $f"
               cp "$f" "output/$(basename $f)"
             fi
           done
+          
+          # newer ile bulamazsa tüm .so'lara bak
+          if [ -z "$(ls -A output/ 2>/dev/null)" ]; then
+            find imgui-java -name "*.so" 2>/dev/null | while read f; do
+              ARCH=$(readelf -h "$f" 2>/dev/null | grep Machine | grep -i "aarch\|arm" || true)
+              if [ -n "$ARCH" ]; then
+                echo "ARM64 bulundu: $f"
+                cp "$f" "output/$(basename $f)"
+              fi
+            done
+          fi
 
           echo "=== output içeriği ==="
           ls -lh output/
