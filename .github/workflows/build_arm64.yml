@@ -1,18 +1,13 @@
 name: Build imgui-java ARM64
-
 on:
   workflow_dispatch:
 
 jobs:
   build-arm64:
     runs-on: ubuntu-24.04-arm
-
     steps:
       - name: Verify ARM64
-        run: |
-          uname -m
-          gcc --version
-          java -version || true
+        run: uname -m
 
       - name: Install dependencies
         run: |
@@ -27,8 +22,6 @@ jobs:
         run: |
           JAVA_PATH=$(dirname $(dirname $(readlink -f $(which javac))))
           echo "JAVA_HOME=$JAVA_PATH" >> $GITHUB_ENV
-          echo "Java home: $JAVA_PATH"
-          ls "$JAVA_PATH/include/" || true
 
       - name: Clone imgui-java 1.86.11
         run: |
@@ -37,32 +30,32 @@ jobs:
           git checkout v1.86.11
           git submodule update --init --recursive
 
-      - name: Build with Gradle
+      - name: Vendor FreeType
+        run: |
+          cd imgui-java
+          chmod +x buildSrc/scripts/vendor_freetype.sh
+          bash buildSrc/scripts/vendor_freetype.sh
+
+      - name: Build ARM64 native lib
         run: |
           cd imgui-java
           chmod +x gradlew
-          # linux64 = Linux x86_64, linuxArm64 dene
-          ./gradlew imgui-binding:generateLibs -Denvs=linux64 -Dlocal 2>&1
+          ./gradlew imgui-binding:generateLibs -Denvs=linuxArm64 -Dlocal
 
-      - name: Debug output
+      - name: Show produced files
         run: |
-          echo "=== Mimari ==="
-          uname -m
-          echo "=== .so dosyaları ==="
-          find imgui-java -name "*.so" 2>/dev/null -exec sh -c 'echo "$1:"; file "$1"' _ {} \;
-          echo "=== Build dizini ==="
-          find imgui-java/imgui-binding -type f -name "*.so" 2>/dev/null
+          find imgui-java -name "*.so" -exec sh -c 'echo "$1:"; file "$1"' _ {} \;
+          find imgui-java/imgui-binding/build -type f 2>/dev/null
 
-      - name: Collect
+      - name: Collect output
         run: |
           mkdir -p output
           find imgui-java -name "*.so" -exec cp {} output/ \;
-          find imgui-java -name "*.dylib" -exec cp {} output/ \;
           ls -lh output/
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: imgui-java-arm64-1.86.11
+          name: imgui-java-arm64-natives-1.86.11
           path: output/
           retention-days: 30
