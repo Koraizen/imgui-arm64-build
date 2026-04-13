@@ -16,12 +16,14 @@ jobs:
             git cmake ninja-build \
             gcc g++ \
             libfreetype-dev \
-            ant openjdk-17-jdk
+            openjdk-17-jdk
 
       - name: Set JAVA_HOME
         run: |
           JAVA_PATH=$(dirname $(dirname $(readlink -f $(which javac))))
           echo "JAVA_HOME=$JAVA_PATH" >> $GITHUB_ENV
+          echo "JAVA_HOME: $JAVA_PATH"
+          ls "$JAVA_PATH/include/"
 
       - name: Clone imgui-java 1.86.11
         run: |
@@ -30,43 +32,61 @@ jobs:
           git checkout v1.86.11
           git submodule update --init --recursive
 
-      - name: Inspect build system
+      - name: Show CMakeLists location
         run: |
-          echo "=== buildSrc içeriği ==="
+          find imgui-java -name "CMakeLists.txt" | head -10
+          echo "=== imgui-binding/src/main/native ==="
+          ls imgui-java/imgui-binding/src/main/native/ 2>/dev/null || echo "yok"
+          echo "=== buildSrc scripts ==="
           find imgui-java/buildSrc -type f | sort
 
-          echo "=== imgui-binding build dosyaları ==="
-          find imgui-java/imgui-binding -name "*.gradle" -o -name "CMakeLists*" | sort
+      - name: Build native .so with CMake directly
+        run: |
+          JAVA_HOME_VAL=$JAVA_HOME
+          
+          # imgui-java'nın CMakeLists.txt'ini bul
+          CMAKE_DIR=$(find imgui-java -name "CMakeLists.txt" | grep -v "/include/" | head -1 | xargs dirname)
+          echo "CMake dizini: $CMAKE_DIR"
+          
+          mkdir -p native-build
+          cd native-build
+          
+          cmake "$OLDPWD/$CMAKE_DIR" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DJAVA_HOME="$JAVA_HOME_VAL" \
+            -DJAVA_INCLUDE_PATH="$JAVA_HOME_VAL/include" \
+            -DJAVA_INCLUDE_PATH2="$JAVA_HOME_VAL/include/linux" \
+            -DIMGUI_FREETYPE=ON \
+            -G Ninja 2>&1
+          
+          ninja -v 2>&1
+          
+          echo "=== Üretilen dosyalar ==="
+          find . -name "*.so" | while read f; do echo "$f"; file "$f"; done
 
-          echo "=== Mevcut Gradle task'ları ==="
-          cd imgui-java
-          ./gradlew imgui-binding:tasks --all 2>&1 | grep -i "generate\|native\|lib\|build" | head -30
-
-      - name: Build ARM64 (FreeType olmadan önce dene)
+      - name: Fallback - Gradle generateLibs with verbose
+        if: always()
         run: |
           cd imgui-java
           chmod +x gradlew
-          ./gradlew imgui-binding:generateLibs -Denvs=linuxArm64 -Dlocal 2>&1
+          ./gradlew imgui-binding:generateLibs -Denvs=linuxArm64 -Dlocal --info 2>&1 | tail -100
         continue-on-error: true
 
-      - name: Show results
-        run: |
-          echo "=== Tüm .so dosyaları ==="
-          find imgui-java -name "*.so" 2>/dev/null | while read f; do
-            echo "$f"; file "$f"
-          done
-          echo "=== Build klasörü ==="
-          find imgui-java/imgui-binding/build -type f 2>/dev/null | head -30
-          echo "=== Hata log ==="
-          find imgui-java -name "*.log" 2>/dev/null | while read f; do
-            echo "--- $f ---"; tail -20 "$f"
-          done
-
-      - name: Upload whatever was built
-        uses: actions/upload-artifact@v4
-        with:
-          name: imgui-java-arm64-debug
-          path: |
-            imgui-java/imgui-binding/build/
-          retention-days: 7
+      - name: Collect all .so files
         if: always()
+        run: |
+          mkdir -p output
+          find . -name "*.so" 2>/dev/null | while read f; do
+            echo "Kopyalanıyor: $f"
+            cp "$f" output/
+          done
+          echo "=== output içeriği ==="
+          ls -lh output/ || echo "Hiç .so bulunamadı"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: imgui-java-arm64-1.86.11
+          path: output/
+          retention-days: 30
