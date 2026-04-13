@@ -29,70 +29,20 @@ jobs:
           git checkout v1.86.11
           git submodule update --init --recursive
 
-      - name: Generate JNI headers via Gradle
+      - name: Debug - repo yapısını göster
         run: |
-          cd imgui-java
-          chmod +x gradlew
-          # Sadece Java derleme + header üretimi, native build YOK
-          ./gradlew imgui-binding:compileJava imgui-binding:jar 2>&1
-
-      - name: Build native lib with CMake directly
-        run: |
-          cd imgui-java/imgui-binding
-          
-          # JNI header'larını üret
-          mkdir -p build/jni/jni-headers
-          javac -h build/jni/jni-headers \
-            $(find src/main/java -name "*.java" | head -5) 2>/dev/null || true
-          
-          # CMakeLists.txt bul
-          CMAKE_DIR=$(find . -name "CMakeLists.txt" | head -1 | xargs dirname)
-          echo "CMakeLists found at: $CMAKE_DIR"
-          
-          mkdir -p cmake-build-arm64
-          cd cmake-build-arm64
-          
-          cmake "$CMAKE_DIR" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DJAVA_HOME=$JAVA_HOME \
-            -DJAVA_INCLUDE_PATH=$JAVA_HOME/include \
-            -DJAVA_INCLUDE_PATH2=$JAVA_HOME/include/linux \
-            -G Ninja
-          
-          ninja -j$(nproc)
-
-      - name: Find and verify built .so files
-        run: |
-          echo "=== Tüm .so dosyaları ==="
-          find imgui-java -name "*.so" -newer imgui-java/gradlew 2>/dev/null | while read f; do
-            echo "--- $f ---"
-            file "$f"
-            readelf -h "$f" 2>/dev/null | grep Machine
-          done
-
-      - name: Collect ARM64 output
-        run: |
-          mkdir -p output
-          find imgui-java -name "*.so" 2>/dev/null | while read f; do
-            ARCH=$(readelf -h "$f" 2>/dev/null | grep Machine | grep -i "aarch\|arm" || true)
-            if [ -n "$ARCH" ]; then
-              echo "ARM64 bulundu: $f"
-              BASENAME=$(basename "$f")
-              cp "$f" "output/$BASENAME"
-            fi
-          done
-          
-          echo "=== output içeriği ==="
-          ls -lh output/
-          
-          if [ -z "$(ls -A output/)" ]; then
-            echo "HATA: Hiç ARM64 .so bulunamadı!"
-            exit 1
-          fi
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: imgui-java-arm64-1.86.11
-          path: output/
-          retention-days: 30
+          echo "=== imgui-java kök ==="
+          ls -la imgui-java/
+          echo ""
+          echo "=== imgui-binding içeriği ==="
+          ls -la imgui-java/imgui-binding/ 2>/dev/null || echo "imgui-binding yok"
+          echo ""
+          echo "=== Tüm CMakeLists.txt ==="
+          find imgui-java -name "CMakeLists.txt" 2>/dev/null
+          echo ""
+          echo "=== Tüm build.gradle ==="
+          find imgui-java -name "build.gradle" 2>/dev/null
+          echo ""
+          echo "=== buildSrc içeriği ==="
+          ls -la imgui-java/buildSrc/src/ 2>/dev/null || echo "yok"
+          find imgui-java/buildSrc -name "*.groovy" 2>/dev/null
