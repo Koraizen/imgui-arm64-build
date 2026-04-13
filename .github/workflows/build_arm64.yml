@@ -30,32 +30,43 @@ jobs:
           git checkout v1.86.11
           git submodule update --init --recursive
 
-      - name: Vendor FreeType
+      - name: Inspect build system
         run: |
-          cd imgui-java
-          chmod +x buildSrc/scripts/vendor_freetype.sh
-          bash buildSrc/scripts/vendor_freetype.sh
+          echo "=== buildSrc içeriği ==="
+          find imgui-java/buildSrc -type f | sort
 
-      - name: Build ARM64 native lib
+          echo "=== imgui-binding build dosyaları ==="
+          find imgui-java/imgui-binding -name "*.gradle" -o -name "CMakeLists*" | sort
+
+          echo "=== Mevcut Gradle task'ları ==="
+          cd imgui-java
+          ./gradlew imgui-binding:tasks --all 2>&1 | grep -i "generate\|native\|lib\|build" | head -30
+
+      - name: Build ARM64 (FreeType olmadan önce dene)
         run: |
           cd imgui-java
           chmod +x gradlew
-          ./gradlew imgui-binding:generateLibs -Denvs=linuxArm64 -Dlocal
+          ./gradlew imgui-binding:generateLibs -Denvs=linuxArm64 -Dlocal 2>&1
+        continue-on-error: true
 
-      - name: Show produced files
+      - name: Show results
         run: |
-          find imgui-java -name "*.so" -exec sh -c 'echo "$1:"; file "$1"' _ {} \;
-          find imgui-java/imgui-binding/build -type f 2>/dev/null
+          echo "=== Tüm .so dosyaları ==="
+          find imgui-java -name "*.so" 2>/dev/null | while read f; do
+            echo "$f"; file "$f"
+          done
+          echo "=== Build klasörü ==="
+          find imgui-java/imgui-binding/build -type f 2>/dev/null | head -30
+          echo "=== Hata log ==="
+          find imgui-java -name "*.log" 2>/dev/null | while read f; do
+            echo "--- $f ---"; tail -20 "$f"
+          done
 
-      - name: Collect output
-        run: |
-          mkdir -p output
-          find imgui-java -name "*.so" -exec cp {} output/ \;
-          ls -lh output/
-
-      - name: Upload
+      - name: Upload whatever was built
         uses: actions/upload-artifact@v4
         with:
-          name: imgui-java-arm64-natives-1.86.11
-          path: output/
-          retention-days: 30
+          name: imgui-java-arm64-debug
+          path: |
+            imgui-java/imgui-binding/build/
+          retention-days: 7
+        if: always()
