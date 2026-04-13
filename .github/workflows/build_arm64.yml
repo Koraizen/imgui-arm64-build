@@ -29,20 +29,49 @@ jobs:
           git checkout v1.86.11
           git submodule update --init --recursive
 
-      - name: Debug - repo yapısını göster
+      - name: Debug - GenerateLibs.groovy içeriğini göster
         run: |
-          echo "=== imgui-java kök ==="
-          ls -la imgui-java/
-          echo ""
-          echo "=== imgui-binding içeriği ==="
-          ls -la imgui-java/imgui-binding/ 2>/dev/null || echo "imgui-binding yok"
-          echo ""
-          echo "=== Tüm CMakeLists.txt ==="
-          find imgui-java -name "CMakeLists.txt" 2>/dev/null
-          echo ""
-          echo "=== Tüm build.gradle ==="
-          find imgui-java -name "build.gradle" 2>/dev/null
-          echo ""
-          echo "=== buildSrc içeriği ==="
-          ls -la imgui-java/buildSrc/src/ 2>/dev/null || echo "yok"
-          find imgui-java/buildSrc -name "*.groovy" 2>/dev/null
+          cat imgui-java/buildSrc/src/main/groovy/tool/generator/GenerateLibs.groovy
+
+      - name: Build ARM64 native lib
+        run: |
+          cd imgui-java
+          chmod +x gradlew
+          # -Plocal → local build yap (prebuilt binary kullanma)
+          # -Penvs=linuxArm64 → sadece ARM64 hedef
+          ./gradlew imgui-binding:generateLibs -Plocal -Penvs=linuxArm64 --info 2>&1 | tail -100
+
+      - name: Find all .so files and check architecture
+        run: |
+          echo "=== Tüm .so dosyaları ==="
+          find imgui-java -name "*.so" 2>/dev/null | while read f; do
+            echo "--- $f ---"
+            file "$f"
+            readelf -h "$f" 2>/dev/null | grep Machine
+          done
+
+      - name: Collect ARM64 output
+        run: |
+          mkdir -p output
+          find imgui-java -name "*.so" 2>/dev/null | while read f; do
+            ARCH=$(readelf -h "$f" 2>/dev/null | grep Machine | grep -i "aarch\|arm" || true)
+            if [ -n "$ARCH" ]; then
+              echo "ARM64 bulundu: $f"
+              cp "$f" "output/$(basename $f)"
+            fi
+          done
+
+          echo "=== output içeriği ==="
+          ls -lh output/
+
+          if [ -z "$(ls -A output/ 2>/dev/null)" ]; then
+            echo "HATA: ARM64 .so bulunamadı!"
+            exit 1
+          fi
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: imgui-java-arm64-1.86.11
+          path: output/
+          retention-days: 30
