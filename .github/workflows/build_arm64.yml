@@ -1,7 +1,6 @@
 name: Build imgui-java ARM64
 on:
   workflow_dispatch:
-
 jobs:
   build-arm64:
     runs-on: ubuntu-24.04-arm
@@ -30,52 +29,66 @@ jobs:
           git checkout v1.86.11
           git submodule update --init --recursive
 
-      - name: Build ARM64 native lib
+      - name: Generate JNI headers via Gradle
         run: |
           cd imgui-java
           chmod +x gradlew
-          ./gradlew imgui-binding:generateLibs -Denvs=linuxArm64 -Dlocal 2>&1
+          # Sadece Java derleme + header üretimi, native build YOK
+          ./gradlew imgui-binding:compileJava imgui-binding:jar 2>&1
 
-      - name: Show all .so files with architecture
+      - name: Build native lib with CMake directly
         run: |
-          find imgui-java/bin -name "*.so" 2>/dev/null | while read f; do
+          cd imgui-java/imgui-binding
+          
+          # JNI header'larını üret
+          mkdir -p build/jni/jni-headers
+          javac -h build/jni/jni-headers \
+            $(find src/main/java -name "*.java" | head -5) 2>/dev/null || true
+          
+          # CMakeLists.txt bul
+          CMAKE_DIR=$(find . -name "CMakeLists.txt" | head -1 | xargs dirname)
+          echo "CMakeLists found at: $CMAKE_DIR"
+          
+          mkdir -p cmake-build-arm64
+          cd cmake-build-arm64
+          
+          cmake "$CMAKE_DIR" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DJAVA_HOME=$JAVA_HOME \
+            -DJAVA_INCLUDE_PATH=$JAVA_HOME/include \
+            -DJAVA_INCLUDE_PATH2=$JAVA_HOME/include/linux \
+            -G Ninja
+          
+          ninja -j$(nproc)
+
+      - name: Find and verify built .so files
+        run: |
+          echo "=== Tüm .so dosyaları ==="
+          find imgui-java -name "*.so" -newer imgui-java/gradlew 2>/dev/null | while read f; do
             echo "--- $f ---"
             file "$f"
             readelf -h "$f" 2>/dev/null | grep Machine
           done
 
-      - name: Collect output - freetype version only
+      - name: Collect ARM64 output
         run: |
           mkdir -p output
-          # freetype klasöründeki ARM64 .so'yu al
-          FT_SO="imgui-java/bin/freetype/libimgui-java64.so"
-          PLAIN_SO="imgui-java/bin/libimgui-java64.so"
-
-          if [ -f "$FT_SO" ]; then
-            ARCH=$(readelf -h "$FT_SO" 2>/dev/null | grep Machine | grep -i "aarch\|arm" || true)
+          find imgui-java -name "*.so" 2>/dev/null | while read f; do
+            ARCH=$(readelf -h "$f" 2>/dev/null | grep Machine | grep -i "aarch\|arm" || true)
             if [ -n "$ARCH" ]; then
-              echo "Freetype ARM64 .so bulundu: $FT_SO"
-              cp "$FT_SO" output/libimgui-java64.so
-            else
-              echo "UYARI: freetype .so ARM64 değil: $(file $FT_SO)"
+              echo "ARM64 bulundu: $f"
+              BASENAME=$(basename "$f")
+              cp "$f" "output/$BASENAME"
             fi
-          fi
-
-          if [ -f "$PLAIN_SO" ]; then
-            ARCH=$(readelf -h "$PLAIN_SO" 2>/dev/null | grep Machine | grep -i "aarch\|arm" || true)
-            if [ -n "$ARCH" ]; then
-              echo "Plain ARM64 .so bulundu: $PLAIN_SO"
-              cp "$PLAIN_SO" output/libimgui-java64-noft.so
-            else
-              echo "Plain .so ARM64 değil, atlanıyor: $(file $PLAIN_SO)"
-            fi
-          fi
-
+          done
+          
           echo "=== output içeriği ==="
           ls -lh output/
-          for f in output/*.so; do
-            echo "$f:"; file "$f"; readelf -h "$f" 2>/dev/null | grep Machine
-          done
+          
+          if [ -z "$(ls -A output/)" ]; then
+            echo "HATA: Hiç ARM64 .so bulunamadı!"
+            exit 1
+          fi
 
       - name: Upload
         uses: actions/upload-artifact@v4
