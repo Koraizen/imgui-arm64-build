@@ -29,17 +29,18 @@ jobs:
           git checkout v1.86.11
           git submodule update --init --recursive
 
-      - name: Debug - GenerateLibs.groovy içeriğini göster
-        run: |
-          cat imgui-java/buildSrc/src/main/groovy/tool/generator/GenerateLibs.groovy
-
       - name: Build ARM64 native lib
         run: |
           cd imgui-java
           chmod +x gradlew
-          # -Plocal → local build yap (prebuilt binary kullanma)
-          # -Penvs=linuxArm64 → sadece ARM64 hedef
-          ./gradlew imgui-binding:generateLibs -Plocal -Penvs=linuxArm64 --info 2>&1 | tail -100
+          
+          # gradle.properties ile JVM argümanlarını geçir
+          # System.getProperty() Gradle daemon JVM'inden okur
+          cat > gradle.properties << 'EOF'
+          org.gradle.jvmargs=-Denvs=linux -Dlocal
+          EOF
+          
+          ./gradlew imgui-binding:generateLibs --info 2>&1 | tail -150
 
       - name: Find all .so files and check architecture
         run: |
